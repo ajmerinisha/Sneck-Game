@@ -1,190 +1,144 @@
 import cv2
-import mediapipe as mp
-import numpy as np
- 
-# Initialize MediaPipe Hands
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-hands = mp_hands.Hands(static_image_mode=False,
-                        max_num_hands=1,
-                        min_detection_confidence=0.7,
-                        min_tracking_confidence=0.7)
- 
-# Colors for UI overlays (reference style)
-CYAN = (255, 255, 0)
-ORANGE = (0, 180, 255)
-WHITE = (255, 255, 255)
-RED = (0, 0, 255)
-CORE = (0, 255, 180)
- 
-def draw_glow_circle(img, center, radius, color, thickness=2, glow=15):
-    # Draw outer glow
-    for g in range(glow, 0, -3):
-        alpha = 0.08 + 0.12 * (g / glow)
-        overlay = img.copy()
-        cv2.circle(overlay, center, radius+g, color, thickness)
-        cv2.addWeighted(overlay, alpha, img, 1-alpha, 0, img)
-    # Draw main circle
-    cv2.circle(img, center, radius, color, thickness)
- 
-def draw_radial_ticks(img, center, radius, color, num_ticks=24, length=22, thickness=3):
-    for i in range(num_ticks):
-        angle = np.deg2rad(i * (360/num_ticks))
-        x1 = int(center[0] + (radius-length) * np.cos(angle))
-        y1 = int(center[1] + (radius-length) * np.sin(angle))
-        x2 = int(center[0] + radius * np.cos(angle))
-        y2 = int(center[1] + radius * np.sin(angle))
-        cv2.line(img, (x1, y1), (x2, y2), color, thickness)
- 
-def draw_core_pattern(img, center, radius):
-    for t in np.linspace(0, 2*np.pi, 40):
-        r = radius * (0.7 + 0.3 * np.sin(6*t))
-        x = int(center[0] + r * np.cos(t))
-        y = int(center[1] + r * np.sin(t))
-        cv2.circle(img, (x, y), 3, ORANGE, -1)
-    cv2.circle(img, center, int(radius*0.6), CYAN, 2)
-    cv2.circle(img, center, int(radius*0.4), ORANGE, 2)
- 
-def draw_hud_details(img, center):
-    for i in range(8):
-        angle = np.deg2rad(210 + i*10)
-        x1 = int(center[0] + 140 * np.cos(angle))
-        y1 = int(center[1] + 140 * np.sin(angle))
-        x2 = int(center[0] + 170 * np.cos(angle))
-        y2 = int(center[1] + 170 * np.sin(angle))
-        cv2.line(img, (x1, y1), (x2, y2), CYAN, 4)
-    for i in range(4):
-        angle = np.deg2rad(270 + i*15)
-        x = int(center[0] + 120 * np.cos(angle))
-        y = int(center[1] + 120 * np.sin(angle))
-        cv2.rectangle(img, (x-10, y-10), (x+10, y+10), CYAN, 2)
- 
-def draw_arc_segments(img, center):
-    cv2.ellipse(img, center, (110,110), 0, -30, 210, CYAN, 3)
-    cv2.ellipse(img, center, (100,100), 0, -30, 210, ORANGE, 2)
-    cv2.ellipse(img, center, (80,80), 0, 0, 360, CYAN, 1)
- 
-# Start webcam
-cap = cv2.VideoCapture(0)
- 
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        break
-    frame = cv2.flip(frame, 1)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = hands.process(rgb)
- 
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            h, w, _ = frame.shape
-            lm = [(int(l.x * w), int(l.y * h)) for l in hand_landmarks.landmark]
- 
-            # Draw hand skeleton
-            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
- 
-            palm = lm[9]
- 
-            # ---- EXTRA GESTURES (OK, V, FINGER COUNT) ----
-            fingers = []
- 
-            # Thumb
-            if lm[4][0] > lm[3][0]:
-                fingers.append(1)
-            else:
-                fingers.append(0)
- 
-            # Other fingers
-            for tip, dip in [(8,6), (12,10), (16,14), (20,18)]:
-                if lm[tip][1] < lm[dip][1]:
-                    fingers.append(1)
-                else:
-                    fingers.append(0)
- 
-            finger_count = sum(fingers)
- 
-            # OK sign detection (thumb + index close)
-            ok_dist = np.linalg.norm(np.array(lm[4]) - np.array(lm[8]))
-            is_ok = ok_dist < 35
- 
-            # Victory sign (V)
-            is_v = fingers[1] == 1 and fingers[2] == 1 and fingers[3] == 0 and fingers[4] == 0
-            # Thumbs up
-            # THUMBS UP (Thumb open, all other fingers closed)
-            thumbs_up = fingers[0] == 0 and fingers[1] == 0 and fingers[2] == 0 and fingers[3] == 0 and fingers[4] == 0
-            thumbs_down = fingers[0] == 1 and fingers[1] == 0 and fingers[2] == 0 and fingers[3] == 0 and fingers[4] == 0
- 
-            # -----------------------------------------------
- 
-            tips = [lm[i] for i in [4, 8, 12, 16, 20]]
-            dists = [np.linalg.norm(np.array(tip) - np.array(palm)) for tip in tips]
-            avg_dist = np.mean(dists)
- 
-            # Pinch detection (thumb tip to index tip)
-            pinch_dist = np.linalg.norm(np.array(lm[4]) - np.array(lm[8]))
-            pinch_val = int(100 - min(pinch_dist, 100))
- 
-            # Gesture logic
-            if avg_dist > 70:  # OPEN HAND
-                draw_glow_circle(frame, palm, 120, CYAN, 3, glow=30)
-                draw_glow_circle(frame, palm, 90, CYAN, 2, glow=20)
-                draw_glow_circle(frame, palm, 60, ORANGE, 2, glow=10)
-                draw_radial_ticks(frame, palm, 120, CYAN, num_ticks=24, length=22, thickness=3)
-                draw_core_pattern(frame, palm, 35)
-                draw_hud_details(frame, palm)
-                draw_arc_segments(frame, palm)
- 
-                # Dynamic lines to fingertips
-                for i in [4, 8, 12, 16, 20]:
-                    cv2.line(frame, palm, lm[i], CYAN, 2)
-                    cv2.circle(frame, lm[i], 12, ORANGE, -1)
- 
-                # Show angle
-                v1 = np.array(lm[4]) - np.array(palm)
-                v2 = np.array(lm[8]) - np.array(palm)
-                try:
-                    angle = int(np.degrees(np.arccos(np.dot(v1, v2)/(np.linalg.norm(v1)*np.linalg.norm(v2)+1e-6))))
-                except:
-                    angle = 0
-                cv2.putText(frame, f'{angle}°', (palm[0]+40, palm[1]-40),
-                            cv2.FONT_HERSHEY_DUPLEX, 1.5, WHITE, 4)
- 
-                # ---- SHOW NEW GESTURES INSIDE UI ----
-                if is_ok:
-                    cv2.putText(frame, "NICE", (palm[0]-90, palm[1]+180),
-                                cv2.FONT_HERSHEY_DUPLEX, 1.4, ORANGE, 3)
-                elif is_v:
-                    cv2.putText(frame, "cheees", (palm[0]-90, palm[1]+180),
-                                cv2.FONT_HERSHEY_DUPLEX, 1.4, ORANGE, 3)
-                elif thumbs_up:
-                     cv2.putText(frame, "THUMBS UP", (palm[0]-120, palm[1]+180),
-                                 cv2.FONT_HERSHEY_DUPLEX, 1.4, CYAN, 3)
-                elif thumbs_down:
-                    cv2.putText (frame, "THUMBS DOWN", (palm[0]-140, palm[1]+180),
-                                 cv2.FONT_HERSHEY_DUPLEX,1.4, CYAN, 3 )    
-                else:
-                    cv2.putText(frame, f"Fingers: {finger_count}", (palm[0]-110, palm[1]+180),
-                                cv2.FONT_HERSHEY_DUPLEX, 1.4, CYAN, 3)
- 
-            elif pinch_val < 60:  # PINCH MODE
-                draw_glow_circle(frame, palm, 60, ORANGE, 3, glow=20)
-                cv2.putText(frame, f'Pinch: {pinch_val}', (palm[0]-40, palm[1]-70),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, ORANGE, 3)
-                for i in range(5):
-                    cv2.ellipse(frame, (palm[0]+80, palm[1]), (30,30),
-                                0, 180, 180+pinch_val+i*10, ORANGE, 2)
- 
-            else:  # FIST
-                draw_glow_circle(frame, palm, 60, CYAN, 3, glow=20)
-                cv2.putText(frame, 'FIST', (palm[0]-30, palm[1]-70),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, ORANGE, 3)
- 
-    cv2.imshow('Hand Tracking AR UI', frame)
-    if cv2.waitKey(1) & 0xFF == 27:
-        break
- 
-cap.release()
-cv2.destroyAllWindows()
- 
- 
- 
+import pygame
+import threading
+import time
+from gesture_controller import GestureController
+from snake_game import SnakeGame
+
+class GameManager:
+    def __init__(self):
+        """Initialize the game manager"""
+        self.game = SnakeGame()
+        self.gesture_controller = GestureController()
+        self.cap = None
+        self.running = True
+        self.gesture_thread = None
+        
+        # Gesture state
+        self.current_gesture = None
+        self.is_speed_boost = False
+        
+    def initialize_camera(self):
+        """Initialize the webcam"""
+        self.cap = cv2.VideoCapture(0)
+        if not self.cap.isOpened():
+            print("Error: Could not open webcam")
+            return False
+        
+        # Set camera properties
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        return True
+    
+    def gesture_detection_loop(self):
+        """Main loop for gesture detection (runs in separate thread)"""
+        while self.running and self.cap is not None:
+            ret, frame = self.cap.read()
+            if not ret:
+                continue
+            
+            # Flip frame horizontally for mirror effect
+            frame = cv2.flip(frame, 1)
+            
+            # Detect gestures
+            gesture, pinch, annotated_frame = self.gesture_controller.detect_gestures(frame)
+            
+            # Update gesture state
+            self.current_gesture = gesture
+            self.is_speed_boost = pinch
+            
+            # Display gesture window
+            cv2.imshow('Nokia Snake - Gesture Control', annotated_frame)
+            
+            # Handle window close
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                self.running = False
+                break
+            
+            time.sleep(0.033)  # ~30 FPS
+    
+    def run(self):
+        """Main game loop"""
+        if not self.initialize_camera():
+            print("Failed to initialize camera. Exiting...")
+            return
+        
+        # Start gesture detection in separate thread
+        self.gesture_thread = threading.Thread(target=self.gesture_detection_loop)
+        self.gesture_thread.daemon = True
+        self.gesture_thread.start()
+        
+        print("Nokia Snake Game Started!")
+        print("Controls:")
+        print("- Move your hand up/down/left/right to control the snake")
+        print("- Pinch thumb and index finger for speed boost")
+        print("- Show 'UP' gesture when game over to restart")
+        print("- Press ESC in game window to quit")
+        print("\nGame Window: Classic Nokia Snake")
+        print("Gesture Window: Webcam feed with hand tracking")
+        
+        # Main game loop
+        last_update = time.time()
+        
+        while self.running:
+            current_time = time.time()
+            
+            # Handle pygame events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        self.running = False
+            
+            # Apply gesture controls
+            if self.current_gesture:
+                self.game.change_direction(self.current_gesture)
+                if self.game.game_over:
+                    self.game.handle_restart(self.current_gesture)
+            
+            # Apply speed boost
+            self.game.set_speed_boost(self.is_speed_boost)
+            
+            # Update game at appropriate speed
+            target_fps = self.game.get_current_speed()
+            if current_time - last_update >= 1.0 / target_fps:
+                self.game.update()
+                last_update = current_time
+            
+            # Draw game
+            self.game.draw()
+            self.game.clock.tick(60)  # Display refresh rate
+        
+        self.cleanup()
+    
+    def cleanup(self):
+        """Clean up resources"""
+        print("Cleaning up...")
+        self.running = False
+        
+        if self.cap is not None:
+            self.cap.release()
+        
+        cv2.destroyAllWindows()
+        self.game.quit()
+        
+        if self.gesture_thread and self.gesture_thread.is_alive():
+            self.gesture_thread.join(timeout=1.0)
+        
+        print("Game closed successfully!")
+
+def main():
+    """Main function"""
+    try:
+        game_manager = GameManager()
+        game_manager.run()
+    except KeyboardInterrupt:
+        print("\nGame interrupted by user")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
